@@ -1,0 +1,120 @@
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
+import os
+import struct
+
+from Crypto.Cipher import AES
+from Crypto.Hash import HMAC, SHA256
+import hashlib
+
+q = 99494096650139337106186933977618513974146274831566768179581759037259788798151499814653951492724365471316253651463342255785311748602922458795201382445323499931625451272600173180136123245441204133515800495917242011863558721723303661523372572477211620144038809673692512025566673746993593384600667047373692203583
+
+g = 44157404837960328768872680677686802650999163226766694797650810379076416463147265401084491113667624054557335394761604876882446924929840681990106974314935015501571333024773172440352475358750668213444607353872754650805031912866692119819377041901642732455911509867728218394542745330014071040326856846990119719675
+
+class PKCS7Encoder():
+    """
+    Technique for padding a string as defined in RFC 2315, section 10.3,
+    note #2
+    """
+    class InvalidBlockSizeError(Exception):
+        """Raised for invalid block sizes"""
+        pass
+
+    def __init__(self, block_size=16):
+        if block_size < 2 or block_size > 255:
+            raise PKCS7Encoder.InvalidBlockSizeError('The block size must be ' \
+                    'between 2 and 255, inclusive')
+        self.block_size = block_size
+
+    def encode(self, text):
+        text_length = len(text)
+        amount_to_pad = self.block_size - (text_length % self.block_size)
+        if amount_to_pad == 0:
+            amount_to_pad = self.block_size
+        pad = chr(amount_to_pad)
+        return text + pad * amount_to_pad
+
+    def decode(self, text):
+        pad = ord(text[-1])
+        return text[:-pad]
+
+def sha256(x):
+    " Computes the SHA256 checksum of the given data "
+    digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
+    digest.update(x)
+    #ret = digest.finalize().encode("base64")
+    return (digest.finalize())
+
+def cipher(k, m, iv):
+    " Encrypts a message "
+
+    obj = AES.new(k, AES.MODE_CBC, iv)
+    encoder = PKCS7Encoder()
+
+    padded_value = encoder.encode(m)
+    ct = obj.encrypt(padded_value)
+
+    return (ct)
+
+def decipher(k, ct, iv):
+    " Decrypts a ciphertext "
+    
+    obj = AES.new(k, AES.MODE_CBC, iv)
+    encoder = PKCS7Encoder()
+
+    padded_value = obj.decrypt(ct)
+    m = encoder.decode(padded_value)
+
+    return (m)
+
+def hmac(k, x):
+    " Authenticates some value "
+    
+    obj = HMAC.new(k, digestmod=SHA256)
+    obj.update(x)
+    
+    return (obj.digest())
+
+def verifies(k, x, tag):
+    " Verifies the MAC "
+
+    tag_to_check = hmac(k, x)
+
+    return (tag_to_check == tag)
+
+def encrypt(k1, k2, m, iv):
+    " Encrypts under the encrypt-then-mac assumption "
+    
+    ct = cipher(k1, m, iv)
+    tag = hmac(k2, ct)
+
+    return (iv + ct + tag)
+
+def decrypt(k1, k2, iv, ct, tag):
+    " Decrypts under the encrypt-then-mac assumption "
+
+    if (verifies(k2, ct, tag)):
+        m = decipher(k1, ct, iv)
+        return (m)
+    else:
+        print 'Invalid tag!'
+
+def parse_ct(ct):
+    " Parses a ciphertext and returns the iv, ciphered message and tag "
+    iv = ct[:32]
+    c = ct[32:(len(ct)-64)]
+    tag = ct[(len(ct)-64):]
+    
+    return (iv, c, tag)
+
+def computeSecret(g, q):
+    " Computes the challenge to be used in the key exchange protocol "
+    r = int(os.urandom(128).encode('hex'), 16) % q
+    sec = pow(g,r,q)
+    return sec
+
+def createChallenge():
+    " Computes the challenge to be used in the key exchange protocol "
+    cha = int(os.urandom(4).encode('hex'), 16)
+    return cha
